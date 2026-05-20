@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# build.sh — 将 qiq-backend-tech skill 打包为 zip。
+#
+# 用法：
+#   ./build.sh                  # 打包到 dist/qiq-backend-tech-<timestamp>.zip
+#   ./build.sh -o out.zip       # 指定输出文件
+#   ./build.sh -v 1.2.0         # 指定版本号（用于命名）
+#   ./build.sh --install        # 打包后安装到 ~/.codebuddy/skills/qiq-backend-tech
+#
+# 默认包含的内容：
+#   SKILL.md
+#   references/*.md
+#   templates/*.md
+#   LICENSE
+#
+# 打包前自动执行：
+#   1. 校验所有必需文件存在
+#   2. 校验 SKILL.md 中引用的 references / templates 路径都能找到对应文件
+#   3. 输出文件清单与字节统计
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_NAME="qiq-backend-tech"
+
+OUTPUT=""
+VERSION=""
+INSTALL=false
+INSTALL_DIR="${HOME}/.codebuddy/skills/${SKILL_NAME}"
+
+# ---------- 颜色 ----------
+if [[ -t 1 ]]; then
+    C_RED='\033[0;31m'
+    C_GREEN='\033[0;32m'
+    C_YELLOW='\033[0;33m'
+    C_BLUE='\033[0;34m'
+    C_RESET='\033[0m'
+else
+    C_RED='' C_GREEN='' C_YELLOW='' C_BLUE='' C_RESET=''
+fi
+
+log()  { printf "${C_BLUE}[build]${C_RESET} %s\n" "$*"; }
+ok()   { printf "${C_GREEN}[ ok ]${C_RESET} %s\n" "$*"; }
+warn() { printf "${C_YELLOW}[warn]${C_RESET} %s\n" "$*"; }
+err()  { printf "${C_RED}[err ]${C_RESET} %s\n" "$*" >&2; }
+
+usage() {
+    sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+}
+
+# ---------- 解析参数 ----------
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o|--output)  OUTPUT="$2"; shift 2 ;;
+        -v|--version) VERSION="$2"; shift 2 ;;
+        --install)    INSTALL=true; shift ;;
+        -h|--help)    usage ;;
+        *) err "未知参数: $1"; exit 1 ;;
+    esac
+done
+
+# ---------- 进入 skill 根目录 ----------
+cd "${SCRIPT_DIR}"
+
+# ---------- 校验必需文件 ----------
+log "校验必需文件..."
+
+REQUIRED_FILES=(
+    "SKILL.md"
+    "LICENSE"
+    "references/00-requirements-template.md"
+    "references/01-requirements-analysis.md"
+    "references/02-architecture-overview.md"
+    "references/03-detailed-design.md"
+    "references/04-key-decisions.md"
+    "references/05-availability-fault-tolerance.md"
+    "references/06-deployment-operations.md"
+    "references/07-risks-open-questions.md"
+    "references/08-anti-patterns.md"
+    "references/09-quality-gate.md"
+    "templates/tech-design.md"
+)
+
+MISSING=0
+for f in "${REQUIRED_FILES[@]}"; do
+    if [[ ! -f "$f" ]]; then
+        err "缺失文件: $f"
+        MISSING=$((MISSING + 1))
+    fi
+done
+
+if [[ $MISSING -gt 0 ]]; then
+    err "共缺失 $MISSING 个文件，构建终止"
+    exit 1
+fi
+ok "所有必需文件齐全（${#REQUIRED_FILES[@]} 个）"
+
+# ---------- 校验 SKILL.md 中的引用路径 ----------
+log "校验 SKILL.md 中的引用路径..."
+BROKEN=0
+# 匹配形如 references/xxx.md 或 templates/xxx.md 的相对路径引用
+while IFS= read -r ref; do
+    if [[ ! -f "$ref" ]]; then
+        err "SKILL.md 引用了不存在的文件: $ref"
+        BROKEN=$((BROKEN + 1))
+    fi
+done < <(grep -oE '(references|templates)/[A-Za-z0-9_./-]+\.md' SKILL.md | sort -u)
+
+if [[ $BROKEN -gt 0 ]]; then
+    err "共 $BROKEN 处引用失效，构建终止"
+    exit 1
+fi
+ok "SKILL.md 引用路径全部有效"
+
+# ---------- 确定输出路径 ----------
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+mkdir -p dist
+
+if [[ -z "$OUTPUT" ]]; then
+    if [[ -n "$VERSION" ]]; then
+        OUTPUT="dist/${SKILL_NAME}-v${VERSION}.zip"
+    else
+        OUTPUT="dist/${SKILL_NAME}-${TIMESTAMP}.zip"
+    fi
+fi
+
+# 如果 OUTPUT 是相对路径，转为绝对路径
+case "$OUTPUT" in
+    /*) ;;
+    *)  OUTPUT="${SCRIPT_DIR}/${OUTPUT}" ;;
+esac
+
+# 若已存在则覆盖
+if [[ -f "$OUTPUT" ]]; then
+    warn "输出文件已存在，将覆盖: $OUTPUT"
+    rm -f "$OUTPUT"
+fi
+
+# ---------- 打包 ----------
+if ! command -v zip >/dev/null 2>&1; then
+    err "未找到 'zip' 命令，请先安装：apt install zip / brew install zip"
+    exit 1
+fi
+
+log "打包到: $OUTPUT"
+
+# 使用临时暂存目录，确保 zip 内的顶层目录为 SKILL_NAME
+STAGING="$(mktemp -d)"
+trap 'rm -rf "$STAGING"' EXIT
+
+mkdir -p "${STAGING}/${SKILL_NAME}"
+for f in "${REQUIRED_FILES[@]}"; do
+    install -D "$f" "${STAGING}/${SKILL_NAME}/$f"
+done
+
+(
+    cd "$STAGING"
+    zip -qr "$OUTPUT" "$SKILL_NAME" \
+        -x "*.DS_Store" "*/.git/*" "*/__pycache__/*"
+)
+
+# ---------- 输出统计 ----------
+SIZE_BYTES=$(wc -c < "$OUTPUT" | tr -d ' ')
+SIZE_HUMAN=$(numfmt --to=iec-i --suffix=B "$SIZE_BYTES" 2>/dev/null || echo "${SIZE_BYTES}B")
+
+ok "构建完成"
+log "输出: $OUTPUT"
+log "大小: $SIZE_HUMAN ($SIZE_BYTES bytes)"
+log "内容清单:"
+unzip -l "$OUTPUT" | sed 's/^/      /'
+
+# ---------- 可选：安装到本地 skills 目录 ----------
+if [[ "$INSTALL" == true ]]; then
+    log "安装到: $INSTALL_DIR"
+    rm -rf "$INSTALL_DIR"
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    cp -r "${STAGING}/${SKILL_NAME}" "$INSTALL_DIR"
+    ok "已安装到 $INSTALL_DIR"
+fi
+
+ok "全部完成 🎉"
