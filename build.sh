@@ -6,6 +6,7 @@
 #   ./build.sh -o out.zip       # 指定输出文件
 #   ./build.sh -v 1.2.0         # 指定版本号（用于命名）
 #   ./build.sh --install        # 打包后安装到 ~/.codebuddy/skills/qiq-backend-tech
+#   ./build.sh --keep-old       # 保留 dist 目录下的历史 zip（默认会清理，仅保留最新）
 #
 # 默认包含的内容：
 #   SKILL.md
@@ -17,6 +18,10 @@
 #   1. 校验所有必需文件存在
 #   2. 校验 SKILL.md 中引用的 references / templates 路径都能找到对应文件
 #   3. 输出文件清单与字节统计
+#
+# 打包后默认行为：
+#   清理 dist/ 目录下旧的 qiq-backend-tech-*.zip，仅保留本次产出的最新 zip。
+#   通过 --keep-old 可关闭此清理行为。
 
 set -euo pipefail
 
@@ -26,6 +31,7 @@ SKILL_NAME="qiq-backend-tech"
 OUTPUT=""
 VERSION=""
 INSTALL=false
+KEEP_OLD=false
 INSTALL_DIR="${HOME}/.codebuddy/skills/${SKILL_NAME}"
 
 # ---------- 颜色 ----------
@@ -55,6 +61,7 @@ while [[ $# -gt 0 ]]; do
         -o|--output)  OUTPUT="$2"; shift 2 ;;
         -v|--version) VERSION="$2"; shift 2 ;;
         --install)    INSTALL=true; shift ;;
+        --keep-old)   KEEP_OLD=true; shift ;;
         -h|--help)    usage ;;
         *) err "未知参数: $1"; exit 1 ;;
     esac
@@ -169,6 +176,28 @@ log "输出: $OUTPUT"
 log "大小: $SIZE_HUMAN ($SIZE_BYTES bytes)"
 log "内容清单:"
 unzip -l "$OUTPUT" | sed 's/^/      /'
+
+# ---------- 清理 dist 下旧 zip（默认开启，可用 --keep-old 关闭） ----------
+DIST_DIR="${SCRIPT_DIR}/dist"
+if [[ "$KEEP_OLD" == true ]]; then
+    log "保留历史 zip（--keep-old）"
+elif [[ -d "$DIST_DIR" ]]; then
+    log "清理 dist/ 下的历史 zip（仅保留最新）..."
+    REMOVED_COUNT=0
+    # 仅清理本 skill 命名规则的 zip，避免误删用户自定义产物
+    while IFS= read -r -d '' old_zip; do
+        if [[ "$old_zip" != "$OUTPUT" ]]; then
+            rm -f -- "$old_zip"
+            REMOVED_COUNT=$((REMOVED_COUNT + 1))
+            log "  已删除：$(basename "$old_zip")"
+        fi
+    done < <(find "$DIST_DIR" -maxdepth 1 -type f -name "${SKILL_NAME}-*.zip" -print0)
+    if [[ $REMOVED_COUNT -eq 0 ]]; then
+        ok "无历史 zip 需要清理"
+    else
+        ok "已清理历史 zip：$REMOVED_COUNT 个，保留：$(basename "$OUTPUT")"
+    fi
+fi
 
 # ---------- 可选：安装到本地 skills 目录 ----------
 if [[ "$INSTALL" == true ]]; then
