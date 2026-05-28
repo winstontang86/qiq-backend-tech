@@ -2,9 +2,22 @@
 
 ## 章节目标
 
-把第 2 章的"骨架"填充为 **可直接进入编码阶段** 的设计。包括数据模型、接口契约、核心流程、状态机。本章是开发同学的"工程蓝图"。
+把第 2 章的"骨架"填充为 **可直接进入编码阶段** 的设计。包括数据模型、接口契约、核心流程、数据流图、状态机。本章是开发同学的"工程蓝图"。若本方案基于已有系统演进，本章每个关键设计对象必须标注 `[新增]` / `[修改]` / `[复用]`，并与 §2.1 架构图、§2.4 变更清单保持一致。
 
 ## 必写小节
+
+### 3.0 详细设计变更标注规则（已有系统演进必写）
+
+若本方案是在已有系统上修改，§3 所有可落代码 / 落配置 / 落数据结构的对象都必须标注变更动作：
+
+| 对象类型 | 标注位置 | 标注要求 |
+|---|---|---|
+| 表 / 缓存 key / MQ topic / NoSQL schema | 小节标题或表格首列 | `[新增]` / `[修改]` / `[复用]`，修改项说明新增字段、索引、TTL、分区等具体变化 |
+| DTO / 事件体 / 状态对象 | 关键数据结构表 | 标注结构是新增、修改还是复用；修改项说明兼容策略 |
+| 接口 / RPC / 事件契约 | 接口标题或契约表 | 标注新增接口、修改接口、复用接口；修改项说明入参、出参、错误码、兼容性变化 |
+| 核心流程 / 数据流图 / 状态机 | 标题或说明首行 | 标注流程是新增、修改还是复用；修改项说明相对现状新增的步骤、分支或状态流转 |
+
+> 新建系统可声明"本章对象均为 `[新增]`"，无需逐项重复；已有系统改造不能省略标注。
 
 ### 3.1 关键存储与关键数据结构设计
 
@@ -62,10 +75,10 @@ CREATE TABLE orders (
 
 进程内或跨服务的**核心 DTO / 事件体 / 状态对象 / 缓存 value 结构**必须显式列出（不只是表 / key 名）：
 
-| 名称 | 类型 | 关键字段（名 : 类型） | 序列化 | 大小估算 | 使用位置 | 兼容性策略 |
-|---|---|---|---|---|---|---|
-| `OrderCreatedEvent` | MQ 事件体 | orderNo / userId / amount / status / occurredAt | protobuf | ~80B | OrderSvc → MQ → Inv / Promo | 字段只增不删；废弃字段保留 90 天 |
-| `OrderDetailVO` | 缓存 value | orderNo / status / items[] / amount / paidAt | JSON | ~1KB | `order:detail:{orderNo}` | 新字段 optional，老消费者忽略 |
+| 名称 | 变更动作 | 类型 | 关键字段（名 : 类型） | 序列化 | 大小估算 | 使用位置 | 兼容性策略 |
+|---|---|---|---|---|---|---|---|
+| `OrderCreatedEvent` | [修改] | MQ 事件体 | orderNo / userId / amount / status / occurredAt | protobuf | ~80B | OrderSvc → MQ → Inv / Promo | 字段只增不删；废弃字段保留 90 天 |
+| `OrderDetailVO` | [复用] | 缓存 value | orderNo / status / items[] / amount / paidAt | JSON | ~1KB | `order:detail:{orderNo}` | 新字段 optional，老消费者忽略 |
 
 > 仅为某一接口的入参 / 出参不必单列，只列**跨模块 / 持久化 / 长期存活**的关键结构。
 
@@ -73,11 +86,13 @@ CREATE TABLE orders (
 
 #### 3.2.1 接口契约
 
-**每个接口**必须给出（**鉴权三要素 + 输入校验 + 错误回显** 是安全聚焦项，不可省）：
+**每个接口**必须在标题或契约表中标注 `[新增]` / `[修改]` / `[复用]`，并给出（**鉴权三要素 + 输入校验 + 错误回显** 是安全聚焦项，不可省）：
 
 | 字段 | 说明 |
 |---|---|
 | 接口名 | `POST /v1/orders` |
+| 变更动作 | [新增] / [修改] / [复用] |
+| 变更摘要 | 修改接口需说明新增 / 调整的入参、出参、错误码或兼容性变化 |
 | 用途 | 创建订单 |
 | 鉴权 - 身份（防垂直越权） | OAuth2 user token；管理端额外 RBAC 角色检查 |
 | 鉴权 - 资源归属（防水平越权 / IDOR） | 服务端**二次校验** `order.user_id == token.userId`；不得仅依赖 URL 参数 |
@@ -139,7 +154,7 @@ paths:
 
 ### 3.3 核心流程设计
 
-**每个 P0 流程**用步骤化方式描述，**逐步**标注：
+**每个 P0 流程**用步骤化方式描述，并在流程标题标注 `[新增]` / `[修改]` / `[复用]`；修改流程必须说明相对现状新增的步骤、异常分支或补偿点。流程内**逐步**标注：
 
 ```
 Step N — <步骤名>
@@ -195,7 +210,9 @@ Step 5 — 异常补偿（独立常驻任务）
 
 ### 3.4 数据流图（关键业务场景）
 
-至少为 **每个 P0 级 FR** 画一张数据流图（可用 Mermaid `sequenceDiagram`）。
+至少为 **每个 P0 级 FR** 画一张数据流图。数据流图**必须使用 Mermaid `sequenceDiagram`，不要使用 `flowchart` / 流程图**；流程图适合表达控制流，无法充分表达调用顺序、参与方、读写数据、同步 / 异步边界和异常回包。
+
+每张数据流图必须在场景标题或图下说明首行标注 `[新增]` / `[修改]` / `[复用]`；修改场景需说明与现有链路相比新增或调整了哪些参与方、调用、读写数据和异常分支。
 
 **Mermaid 时序图示例**：
 
@@ -208,41 +225,33 @@ sequenceDiagram
     participant DB as 订单DB
     participant MQ as RocketMQ
 
-    C->>G: POST /orders
-    G->>O: createOrder(req)
+    C->>G: POST /orders (userId, skuId, qty)
+    G->>O: createOrder(req, traceId)
     O->>I: deductStock(skuId, qty) [同步, 超时500ms]
-    I-->>O: ok / fail
+    I-->>O: deductResult(stockStatus, requestId)
     alt 扣减成功
-        O->>DB: insert orders
-        O-->>MQ: publish order_created (异步)
-        O-->>G: 200 + orderId
+        O->>DB: insert orders(orderNo, userId, amount, status)
+        O-->>MQ: publish order_created(orderNo, userId, amount) [异步]
+        O-->>G: 200 (orderId, status)
     else 扣减失败
-        O-->>G: 4xx 库存不足
+        O-->>G: 4xx (errorCode=STOCK_NOT_ENOUGH)
+    else 扣减超时
+        O->>DB: insert pending_compensation(orderNo, requestId)
+        O-->>G: 202 (orderId, status=PENDING)
     end
 ```
 
 每张图配文字说明：
 - 这个流程对应哪些 FR / NFR。
+- 关键参与方及其职责边界。
+- 每条关键调用传递的核心数据项（请求字段、事件字段、状态字段）。
+- 关键存储 / 缓存 / MQ 的读写点及写入字段。
 - 关键决策点（如同步还是异步、强一致还是最终一致）的理由。
-- 异常分支（已在图中体现）。
+- 异常分支、补偿动作和用户可见回包（已在图中体现）。
 
 ### 3.5 状态机设计
 
-**涉及状态流转的实体**必须给出状态图（Mermaid `stateDiagram-v2`）+ 流转表。状态 ID 使用英文大写或下划线；事件文本保持短句；复杂条件放到流转表，避免在图中写长文本、HTML 标签或 emoji。
-
-```mermaid
-stateDiagram-v2
-    [*] --> PENDING: createOrder
-    PENDING --> PAID: paySuccess
-    PENDING --> CANCELLED: timeout / userCancel
-    PAID --> REFUNDING: refundRequest
-    REFUNDING --> REFUNDED: refundSuccess
-    REFUNDING --> PAID: refundFailed
-    PAID --> COMPLETED: deliveryConfirmed
-    COMPLETED --> [*]
-    CANCELLED --> [*]
-    REFUNDED --> [*]
-```
+**涉及状态流转的实体**必须给出状态流转表；状态简单且渲染环境确认支持时，可补充 Mermaid 状态图。状态 ID 使用英文大写或下划线；事件文本保持短句；复杂条件放到流转表，避免在图中写长文本、HTML 标签或 emoji。
 
 **状态流转表**：
 
@@ -254,6 +263,7 @@ stateDiagram-v2
 
 ## Checklist
 
+- [ ] 已有系统演进：§3 所有关键对象（存储、缓存、MQ、DTO、接口、流程、数据流图、状态机）已标注 `[新增]` / `[修改]` / `[复用]`，且与 §2.1 / §2.4 一致。
 - [ ] **关键存储**全部覆盖：每张关键表给出 DDL + 索引说明 + 容量估算 + 分片策略；每个关键缓存 key / NoSQL Schema / MQ 主题给出对应字段表。
 - [ ] **关键数据结构**已列出（跨模块 DTO / 事件体 / 状态对象 / 缓存 value），含序列化、大小估算、兼容性策略。
 - [ ] 缓存 key 给出命名规范、TTL、容量、击穿/穿透/雪崩防护。
@@ -262,7 +272,7 @@ stateDiagram-v2
 - [ ] 每个 P0 流程按 Step 模板写完，每步包含输入 / 输出 / 异常 / 超时 / 幂等；涉及鉴权步骤显式标注资源归属校验。
 - [ ] 流程必须包含异常路径与补偿路径，不只 happy path。
 - [ ] 每个 P0 FR 都有对应数据流图，且包含异常分支。
-- [ ] 状态机实体给出状态图 + 流转表，包含守卫条件与副作用。
+- [ ] 状态机实体给出流转表（状态图可选），包含守卫条件与副作用。
 - [ ] 所有字段、表名、组件名与第 2 章保持一致（术语统一）。
 
 ## 反模式
@@ -271,6 +281,7 @@ stateDiagram-v2
 - ❌ **接口字段没约束** — `name: string` 不写最大长度，攻击面无限。
 - ❌ **错误码"待补充"** — 客户端无法实现重试策略。
 - ❌ **流程只写 happy path** — 真实故障必出问题。
+- ❌ **变更动作不标注** — 基于已有系统改造时，详细设计只写目标态，不说明哪些对象新增 / 修改 / 复用，开发和评审无法判断真实改动范围。
 - ❌ **状态机只画图不列流转表** — 守卫条件与副作用丢失。
 - ❌ **无幂等设计** — 网络抖动重试就会重复扣款。
 - ❌ **越权盲区** — 接口仅依赖 URL / 入参中的 ID，不做资源归属校验，等于 IDOR 直接送货上门。
